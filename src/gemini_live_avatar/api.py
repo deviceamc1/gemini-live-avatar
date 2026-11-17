@@ -11,7 +11,7 @@ import uuid
 import wave
 from asyncio import to_thread
 from pathlib import Path
-from typing import Tuple, Union, List
+from typing import Optional, Tuple, Union, List
 
 from dotenv import load_dotenv, find_dotenv
 from fastapi import FastAPI, WebSocket
@@ -33,7 +33,7 @@ from gemini_live_avatar.word_generator import WordGenerator
 # Load environment variables
 load_dotenv(find_dotenv())
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"), vertexai=False)
-word_generator = WordGenerator(model_size="small", compute_type="float32")
+word_generator = WordGenerator(model_size="tiny", compute_type="int8")
 
 
 task_registry: set[asyncio.Task] = set()
@@ -135,8 +135,8 @@ async def create_gemini_live_session(tools, runtime_config):
             realtime_input_config=RealtimeInputConfig(
                 automatic_activity_detection=AutomaticActivityDetection(
                     disabled=False,
-                    start_of_speech_sensitivity=StartSensitivity.START_SENSITIVITY_LOW,
-                    end_of_speech_sensitivity=EndSensitivity.END_SENSITIVITY_LOW,
+                    start_of_speech_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
+                    end_of_speech_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
                 )
             )
         )
@@ -348,6 +348,7 @@ async def handle_user_messages(ws: WebSocket, session: SessionState, runtime_con
                 )
             elif msg_type == "end":
                 logger.info("End of turn received")
+                await session.live_session.send_realtime_input(audio_stream_end=True)
 
             else:
                 logger.warning(f"Unknown message type: {msg_type}")
@@ -374,7 +375,7 @@ async def handle_gemini_responses(ws: WebSocket, session: SessionState, runtime_
                     if runtime_config.response_modality == "text":
                         await process_server_content_text_mode(ws, session, chunk.server_content)
                     elif runtime_config.response_modality == "audio":
-                        await process_server_content_audio_mode(ws, session, chunk)
+                        await process_server_content_audio_mode(ws, session, chunk, runtime_config)
 
             except Exception as e:
                 logger.error(f"Error from Gemini stream: {e}")
@@ -552,7 +553,12 @@ async def process_server_content_text_mode(ws: WebSocket, session: SessionState,
         session.is_receiving_response = False
 
 
-async def process_server_content_audio_mode(ws: WebSocket, session: SessionState, response: LiveServerMessage):
+async def process_server_content_audio_mode(
+    ws: WebSocket,
+    session: SessionState,
+    response: LiveServerMessage,
+    runtime_config: Optional[RuntimeConfig] = None,
+):
     if not response:
         logger.warning("Received empty server content")
         return
@@ -561,21 +567,21 @@ async def process_server_content_audio_mode(ws: WebSocket, session: SessionState
     data = response.data
     session.is_receiving_response = True
 
-    # Initialize audio stream for this session if needed
+    # Initialize audio stream and transcript buffer for this session if needed
     if not getattr(session, "audio_stream", None):
         session.audio_stream = io.BytesIO()
-        session.audio_file = wave.open(session.audio_stream, "wb")
-        session.audio_file.setnchannels(1)
-        session.audio_file.setsampwidth(2)       # 16-bit audio
-        session.audio_file.setframerate(24000)   # 24kHz
+        session.output_transcript_parts = []
         logger.info("Initialized in-memory audio stream")
 
-    # Write current chunk to memory
+    # Write current PCM chunk directly to memory
     if (server_content and server_content.model_turn) and data:
-        session.audio_file.writeframes(data)
+        session.audio_stream.write(data)
 
-    if server_content and server_content.output_transcription:
+    if server_content and server_content.output_transcription and server_content.output_transcription.text:
         transcription = server_content.output_transcription.text
+        if session.output_transcript_parts is None:
+            session.output_transcript_parts = []
+        session.output_transcript_parts.append(transcription)
         logger.info(f"Transcription received: {transcription}")
 
     # Finalize and send when turn is complete
@@ -585,31 +591,26 @@ async def process_server_content_audio_mode(ws: WebSocket, session: SessionState
             "type": "turn_complete"
         })
         try:
-            # Finalize audio stream
-            session.audio_file.close()
-            audio_bytes = session.audio_stream.getvalue()
+            pcm_bytes = session.audio_stream.getvalue()
+            full_transcript = "".join(session.output_transcript_parts or []).strip()
 
-            # Write to temp WAV file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-                tmp_path = Path(tmp_file.name)
-                with wave.open(str(tmp_path), "wb") as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(24000)
-                    wf.writeframes(audio_bytes)
+            if pcm_bytes:
+                # Run fast in-memory phoneme alignment using Gemini's transcript
+                words_data = await to_thread(
+                    word_generator.generate_from_bytes,
+                    pcm_bytes,
+                    full_transcript,
+                    runtime_config.tts_lang if runtime_config else "en-US",
+                )
 
-            # Run generate in a thread (since it's blocking and needs a file path)
-            words_data = await to_thread(word_generator.generate, str(tmp_path))
-
-            # Encode audio for transport
-            audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
-            await ws.send_json({
-                "type": "audio",
-                "data": {
-                    "audio": audio_base64,
-                    "words": words_data
-                }
-            })
+                audio_base64 = base64.b64encode(pcm_bytes).decode("utf-8")
+                await ws.send_json({
+                    "type": "audio",
+                    "data": {
+                        "audio": audio_base64,
+                        "words": words_data
+                    }
+                })
         except Exception as e:
             logger.exception("Error generating viseme data from audio")
             await ws.send_json({
@@ -620,11 +621,8 @@ async def process_server_content_audio_mode(ws: WebSocket, session: SessionState
             # Cleanup
             session.audio_stream.close()
             session.audio_stream = None
-            session.audio_file = None
+            session.output_transcript_parts = None
             session.is_receiving_response = False
-
-            if tmp_path and tmp_path.exists():
-                tmp_path.unlink()
 
 
 

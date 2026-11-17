@@ -50,7 +50,7 @@ def start(
     # runtime configuration
     tts_lang: Annotated[str, typer.Option("--tts-lang", help="Text-to-Speech language")] = "en-US",
     tts_voice: Annotated[str, typer.Option("--tts-voice", help="Text-to-Speech voice")] = "en-GB-Standard-A",
-    avatar_path: Annotated[str, typer.Option("--avatar-path", help="Path to avatar model")] = "https://models.readyplayer.me/64bfa15f0e72c63d7c3934a6.glb",
+    avatar_path: Annotated[str, typer.Option("--avatar-path", help="Path to avatar model")] = "/avatars/brunette.glb",
     google_search_grounding: Annotated[bool, typer.Option("--google-search-grounding", help="Enable Google Search grounding")] = False,
     mcp_server_config: Annotated[Optional[str], typer.Option("--mcp-server-config", help="MCP server configuration file path")] = None,
     response_modality : Annotated[str, typer.Option("--response-modality", help="Response modality (text, audio)")] = "text",

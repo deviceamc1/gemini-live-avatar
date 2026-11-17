@@ -94,17 +94,19 @@ export default class MediaHandler {
   startFrameCapture(onFrame) {
     this.frameCallback = onFrame;
     const captureFrame = () => {
-      if (!this.currentStream || !this.videoElement) return;
+      if (!this.currentStream || !this.videoElement || !this.videoElement.videoWidth) return;
 
+      const maxWidth = 640;
+      const scale = Math.min(1, maxWidth / this.videoElement.videoWidth);
       const canvas = document.createElement("canvas");
       const context = canvas.getContext("2d");
-      canvas.width = this.videoElement.videoWidth;
-      canvas.height = this.videoElement.videoHeight;
+      canvas.width = Math.round(this.videoElement.videoWidth * scale);
+      canvas.height = Math.round(this.videoElement.videoHeight * scale);
 
       context.drawImage(this.videoElement, 0, 0, canvas.width, canvas.height);
 
       // Convert to JPEG and base64 encode
-      const base64Image = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
+      const base64Image = canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
       this.frameCallback(base64Image);
     };
 

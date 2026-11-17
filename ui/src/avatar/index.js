@@ -1,12 +1,17 @@
 import { TalkingHead } from "talkinghead";
 
 /**
- * Ensures the given URL is a valid Ready Player Me model URL
- * and appends only missing required query parameters.
- * @param {string} url - The input URL
- * @returns {string|null} - The updated URL if valid, otherwise null
+ * Normalizes an avatar model URL. For legacy Ready Player Me URLs, appends
+ * missing required morph-target query parameters; all other relative or
+ * absolute .glb URLs are returned unchanged.
+ * @param {string} url - The input URL or relative path
+ * @returns {string|null} - The resolved URL if valid, otherwise null
  */
-function formatReadyPlayerMeURL(url) {
+function resolveAvatarURL(url) {
+  if (!url || typeof url !== "string") {
+    return null;
+  }
+
   const RPM_DOMAIN = "models.readyplayer.me";
   const REQUIRED_PARAMS = {
     morphTargets: "ARKit,Oculus+Visemes,mouthOpen,mouthSmile,eyesClosed,eyesLookUp,eyesLookDown",
@@ -15,13 +20,12 @@ function formatReadyPlayerMeURL(url) {
   };
 
   try {
-    const parsedUrl = new URL(url);
+    const parsedUrl = new URL(url, window.location.origin);
     if (!parsedUrl.hostname.includes(RPM_DOMAIN)) {
-      console.warn("❌ Not a valid Ready Player Me URL.");
-      return null;
+      return url;
     }
 
-    // Add only missing parameters
+    // Add only missing parameters for Ready Player Me URLs
     Object.entries(REQUIRED_PARAMS).forEach(([key, value]) => {
       if (!parsedUrl.searchParams.has(key)) {
         parsedUrl.searchParams.set(key, value);
@@ -55,7 +59,7 @@ export default class Avatar {
       lipsyncModules = ["en"],
       cameraView = "upper",
       lightAmbientIntensity = 1,
-      avatarPath = "https://models.readyplayer.me/64bfa15f0e72c63d7c3934a6.glb",
+      avatarPath = "/avatars/brunette.glb",
       body = "F",
       avatarMood = "neutral",
       ttsLang,
@@ -66,6 +70,11 @@ export default class Avatar {
     this.onLoading("start");
 
     try {
+      const resolvedAvatarUrl = resolveAvatarURL(avatarPath);
+      if (!resolvedAvatarUrl) {
+        throw new Error(`Invalid avatar URL: ${avatarPath}`);
+      }
+
       this.head = new TalkingHead(this.nodeAvatar, {
         ttsEndpoint: "https://texttospeech.googleapis.com/v1beta1/text:synthesize",
         ttsApikey,
@@ -77,7 +86,7 @@ export default class Avatar {
 
       await this.head.showAvatar(
         {
-          url: formatReadyPlayerMeURL(avatarPath),
+          url: resolvedAvatarUrl,
           body,
           avatarMood,
           ttsLang,

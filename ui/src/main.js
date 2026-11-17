@@ -26,7 +26,8 @@ let isSharingScreen = false;
 
 
 const mediaHandler = new MediaHandler(videoElement);
-const geminiApi = new GeminiAPI("ws://localhost:8080/api/ws/live");
+const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+const geminiApi = new GeminiAPI(`${wsProtocol}//${window.location.host}/api/ws/live`);
 const audioRecorder = new AudioRecorder();
 const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
 const audioStreamer = new AudioStreamer(audioContext);
@@ -307,6 +308,9 @@ geminiApi.onMessageParsed = async (message) => {
                 nodeLoading.textContent = `Loading ${progress.percent}%`;
             } else if (status === "complete") {
                 nodeLoading.style.display = "none";
+            } else if (status === "error") {
+                nodeLoading.style.display = "none";
+                logMessage("error", `❌ Avatar failed to load: ${progress?.error?.message || "Unknown error"}`);
             }
         };
 

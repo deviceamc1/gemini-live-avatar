@@ -35,6 +35,7 @@ class SessionState:
     live_session: Optional[AsyncSession] = None
     mcp_server_client: Optional[MCPClient] = None
     received_model_response: bool = False  # Track if we've received a model response in current turn
+    output_transcript_parts: Optional[list[str]] = None
 
 # Global session storage
 active_sessions: Dict[str, SessionState] = {}
